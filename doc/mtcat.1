@@ -1,0 +1,15 @@
+.\" Manual for multithreaded concatenate (mtcat)
+.TH MTCAT 1 "March 2021" "Stand Alone Command" "User Commands"
+.SH NAME
+mtcat \- print concatenated files
+.SH SYNOPSIS
+.B mtcat\fR [-u] [file...]
+.SH DESCRIPTION
+reads file(s) and writes the contents in sequence to standard out. mtcat uses standard input when no files are given or when file is \-.
+.SH OPTIONS
+\fB\-u\fR
+parses individual characters without delay as they are read.
+.SH AUTHOR
+Written by Tyler Vowles.
+.SH COPYRIGHT
+Copyright \(co 2021 Tyler Vowles. MIT License see LICENSE file for more details.
