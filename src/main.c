@@ -10,8 +10,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#include "include/config.h"
-
 struct thread_arg
 {
 
@@ -19,57 +17,56 @@ struct thread_arg
     int errfile, err;
     int argno;
     size_t len;
-    int (*func)(FILE *, int);
-    char **files;
+    int (*func)(int, int);
+    char **argv;
 
 };
 
 static int
-rdblk(FILE *fp, int ofd)
+rdblk(int infd, int outfd)
 {
-
-    int fd;
     void *buf;
     ssize_t len;
     struct stat st;
-
-    fd = fileno(fp);
-    fstat(fd, &st);
+    fstat(infd, &st);
 
     buf = malloc(st.st_blksize);
     if (buf == NULL)
     {
-        close(fd);
+        close(infd);
         return errno;
     }
 
     do
     {
 
-        len = read(fd, buf, st.st_blksize);
-        write(ofd, buf, len);
+        len = read(infd, buf, st.st_blksize);
+        write(outfd, buf, len);
 
     } while (len == st.st_blksize);
 
     /* clean up */
     free(buf);
-    close(fd);
+
     return 0;
 
 }
 
 static int
-rdstream(FILE* fp, int ofd)
+rdstream(int infd, int outfd)
 {
 
     int ch;
+    ssize_t len;
 
-    while ((ch = getc(fp)) != EOF)
+    do
     {
-        write(ofd, &ch, 1);
-    }
-    
-    fclose(fp);
+
+        len = read(infd, &ch, 1);
+        write(outfd, &ch, len);
+
+    } while (len == 1);
+
     return 0;
 
 }
@@ -83,41 +80,43 @@ auxiliary(void *args)
     for (int i = 0; i < args_form->argno; i++)
     {
 
-        FILE *fp;
+        int fd;
 
-        if (args_form->files[i][0] == '-' && args_form->files[i][1] == '\0')
+        if (args_form->argv[i][0] == '-' && args_form->argv[i][1] == '\0')
         {
-
-            fp = stdin;
-            stdin = fopen("/dev/null", "r");
+            
+            /* prevents stdin from being closed twice */
+            fd = dup(STDIN_FILENO);
 
         } else {
 
-            fp = fopen(args_form->files[i], "r");
-            if (fp == NULL)
-            {
-
-                args_form->err = errno;
-                args_form->errfile = i;
-                close(args_form->pipefd[1]);
-                return NULL;
-
-            }
+            fd = open(args_form->argv[i], O_RDONLY);
 
         }
 
-        args_form->err = args_form->func(fp, args_form->pipefd[1]);
+        /* if error let main thread deal with it */
+        if (fd == -1)
+        {
+
+            args_form->err = errno;
+            args_form->errfile = i;
+            close(args_form->pipefd[1]);
+            return NULL;
+
+        }
+
+        args_form->err = args_form->func(fd, args_form->pipefd[1]);
         if (args_form->err)
         {
 
             args_form->errfile = i;
             close(args_form->pipefd[1]);
-            fclose(fp);
+            close(fd);
             return NULL;
 
         }
 
-        fclose(fp);
+        close(fd);
 
     }
 
@@ -143,9 +142,9 @@ main(int argc, char **argv)
     if (argc < 2)
     {
         
-        rdblk(stdin, STDOUT_FILENO);
+        rdblk(STDIN_FILENO, STDOUT_FILENO);
         return EXIT_SUCCESS;
-        
+
     }
 
     // check if first argument is -u flag
@@ -174,7 +173,7 @@ main(int argc, char **argv)
     // break point that seperates the files to be concatenated by the threads
     argbrk = argc / 2 + argc % 2;
     aux_args.argno = argc - argbrk;
-    aux_args.files = argv + argbrk;
+    aux_args.argv = argv + argbrk;
     
     err = pthread_create(&aux, NULL, &auxiliary, &aux_args);
     if (err != 0)
@@ -191,32 +190,33 @@ main(int argc, char **argv)
     for (int i = argstart; i < argbrk; i++)
     {
         
-        FILE* fp;
+        int fd;
 
         // read from stdin
         if (argv[i][0] == '-' && argv[i][1] == '\0')
         {
-            fp = stdin;
-            stdin = fopen("/dev/null", "r");
+            /* prevents stdin from being closed twice */
+            fd = dup(STDIN_FILENO);
         } else {
 
-            fp = fopen(argv[i], "r");
-            if (fp == NULL)
-            {
-                fprintf(stderr, "failed to open \"%s\": %s\n", argv[i], strerror(err));
-                close(aux_args.pipefd[0]);
-                return EXIT_FAILURE;
-            }
+            fd = open(argv[i], O_RDONLY);
 
+        }
+
+        if (fd == -1)
+        {
+            fprintf(stderr, "failed to open \"%s\": %s\n", argv[i], strerror(err));
+            close(aux_args.pipefd[0]);
+            return EXIT_FAILURE;
         }
         
 
-        err = aux_args.func(fp, STDOUT_FILENO);
+        err = aux_args.func(fd, STDOUT_FILENO);
         if (err)
         {
             fprintf(stderr, "failed to read \"%s\": %s\n", argv[i], strerror(err));
         }
-        fclose(fp);
+        close(fd);
 
     }
 

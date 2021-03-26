@@ -1,0 +1,4 @@
+#!/bin/sh
+
+mv DOC DOCDIR/DOC
+mv BIN MANDIR/BIN
